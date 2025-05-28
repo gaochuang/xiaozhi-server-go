@@ -1,7 +1,4 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: Go Multi-Platform Build
 
 on:
   push:
@@ -10,21 +7,72 @@ on:
     branches: [ "main" ]
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        goarch: [amd64]
+    
     steps:
-    - uses: actions/checkout@v4
-
+    - name: Checkout code
+      uses: actions/checkout@v2
+    
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: '1.24.2'
-
+    
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libopus-dev pkg-config make
-
-    - name: Build and Test with Makefile
-      run: make
+        if [ "${{ matrix.goarch }}" = "arm64" ]; then
+          sudo apt-get install -y \
+            libopus-dev:arm64 \
+            pkg-config \
+            make \
+            gcc-aarch64-linux-gnu
+        else
+          sudo apt-get install -y \
+            libopus-dev \
+            pkg-config \
+            make
+        fi
+    
+    - name: Clean Go module cache
+      run: |
+        go clean -modcache
+        go mod tidy
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/go-build
+        key: ${{ runner.os }}-go-mod-${{ hashFiles('**/go.sum', '**/go.mod') }}
+        restore-keys: |
+          ${{ runner.os }}-go-mod-
+    
+    - name: Build binary for ${{ matrix.os }} and ${{ matrix.goarch }}
+      run: |
+        mkdir -p bin
+        if [ "${{ matrix.goarch }}" = "arm64" ]; then
+          GOARCH=arm64 GOOS=linux CGO_ENABLED=1 go build -o bin/xiaozhi-server-${{ matrix.os }}-${{ matrix.goarch }} ./src/main.go
+        else
+          GOARCH=amd64 GOOS=linux CGO_ENABLED=0 go build -o bin/xiaozhi-server-${{ matrix.os }}-${{ matrix.goarch }} ./src/main.go
+        fi
+    
+    - name: Upload binaries as artifacts
+      uses: actions/upload-artifact@v4.6.2
+      with:
+        name: go-binaries
+        path: bin/*
+        if-no-files-found: warn
+        compression-level: 6
+        overwrite: false
+        include-hidden-files: false
+    
+    - name: Post job cleanup
+      if: always()
+      run: |
+        echo "Post job cleanup"
